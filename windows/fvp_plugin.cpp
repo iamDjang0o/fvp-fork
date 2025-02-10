@@ -30,14 +30,21 @@ class TexturePlayer final: public Player
 public:
     TexturePlayer(int64_t handle, const ComPtr<ID3D11Texture2D>& d3d11tex, flutter::TextureRegistrar* texRegistrar)
         : Player(reinterpret_cast<mdkPlayerAPI*>(handle))
-        , tex(d3d11tex)
+        , rt(d3d11tex)
     {
+        ComPtr<ID3D11Device> dev;
+        rt->GetDevice(&dev);
+        dev->GetImmediateContext(&ctx);
+
         D3D11_TEXTURE2D_DESC desc;
-        tex->GetDesc(&desc);
+        rt->GetDesc(&desc);
+        desc.MiscFlags |= D3D11_RESOURCE_MISC_SHARED;
+        MS_ENSURE(dev->CreateTexture2D(&desc, nullptr, &tex));
+
         ComPtr<IDXGIResource> res;
-        MS_WARN(tex.As(&res));
+        MS_ENSURE(tex.As(&res));
         HANDLE shared_handle = nullptr;
-        MS_WARN(res->GetSharedHandle(&shared_handle));
+        MS_ENSURE(res->GetSharedHandle(&shared_handle));
         flt_surface_desc->struct_size = sizeof(FlutterDesktopGpuSurfaceDescriptor);
         flt_surface_desc->handle = shared_handle;// tex.Get();
         //flt_surface_desc->handle = tex.Get(); // eglbind error
@@ -49,22 +56,27 @@ public:
         flt_tex = make_unique<flutter::TextureVariant>(flutter::GpuSurfaceTexture(
             kFlutterDesktopGpuSurfaceTypeDxgiSharedHandle
             //kFlutterDesktopGpuSurfaceTypeD3d11Texture2D
-            , [pflt_surface_desc = flt_surface_desc.get()](size_t width, size_t height) {
+            , [pflt_surface_desc = flt_surface_desc.get(), this](size_t width, size_t height) {
                 //printf("ObtainDescriptorCallback %llux%llu. shared_handle_ %p\n", width, height, shared_handle_); fflush(nullptr);
                 //player.renderVideo(); // stutter
+                scoped_lock lock(mtx);
+                ctx->CopyResource(tex.Get(), rt.Get());
+                ctx->Flush();
                 return pflt_surface_desc;
             }));
         textureId = texRegistrar->RegisterTexture(flt_tex.get());
 
 
         D3D11RenderAPI ra{};
-        ra.rtv = tex.Get();
+        ra.rtv = rt.Get();
         setRenderAPI(&ra);
         setVideoSurfaceSize(desc.Width, desc.Height);
         setRenderCallback([this, texRegistrar](void*) {
+            scoped_lock lock(mtx);
             renderVideo();
             texRegistrar->MarkTextureFrameAvailable(textureId);
             });
+
     }
 
     ~TexturePlayer() override {
@@ -78,20 +90,33 @@ private:
     unique_ptr<flutter::TextureVariant> flt_tex;
     unique_ptr<FlutterDesktopGpuSurfaceDescriptor> flt_surface_desc = make_unique<FlutterDesktopGpuSurfaceDescriptor>();
     ComPtr<ID3D11Texture2D> tex;
+    ComPtr<ID3D11Texture2D> rt;
+    ComPtr<ID3D11DeviceContext> ctx;
+    mutex mtx;
 };
+
+template<typename T>
+auto View_GetGraphicsAdapter(T* v) -> decltype(v->GetGraphicsAdapter())
+{
+    return v->GetGraphicsAdapter();
+}
+
+template<typename T>
+IDXGIAdapter* View_GetGraphicsAdapter(T v) {
+    return nullptr;
+}
 
 // static
 void FvpPlugin::RegisterWithRegistrar(
     flutter::PluginRegistrarWindows *registrar) {
+  IDXGIAdapter *adapter = View_GetGraphicsAdapter(registrar->GetView());
+  if (!adapter)
+    clog << "FlutterView::GetGraphicsAdapter() is not available, texture may be invisible" << endl;
   auto channel =
       std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
           registrar->messenger(), "fvp",
           &flutter::StandardMethodCodec::GetInstance());
-  auto plugin = std::make_unique<FvpPlugin>(registrar->texture_registrar()
-#ifdef VIEW_HAS_GetGraphicsAdapter
-      , registrar->GetView()->GetGraphicsAdapter()
-#endif
-      );
+  auto plugin = std::make_unique<FvpPlugin>(registrar->texture_registrar(), adapter);
 
   channel->SetMethodCallHandler(
       [plugin_pointer = plugin.get()](const auto &call, auto result) {
@@ -99,6 +124,7 @@ void FvpPlugin::RegisterWithRegistrar(
       });
 
   registrar->AddPlugin(std::move(plugin));
+  SetGlobalOption("MDK_KEY", "980B9623276F746C5FBB5EC5120D4A99A0B58B635592EAEE41F6817FDF3B28B96AC4A49866257726C19B246863B5ADAF5D17464E86D72A90634E8AE8418F810967F469DCD8908B93A044A13AEDF2B566E0B5810523E2B59E2D83E616B1B807B66253E1607A79BC86AEDE1AEF46F79AA60F36BE44DDEE47B84E165AF2788F8109");
 }
 
 FvpPlugin::FvpPlugin(flutter::TextureRegistrar* tr, IDXGIAdapter* adapter)
@@ -156,6 +182,8 @@ void FvpPlugin::HandleMethodCall(
     if (auto it = players_.find(texId); it != players_.cend()) {
         players_.erase(it);
     }
+    result->Success();
+  } else if (method_call.method_name() == "MixWithOthers") {
     result->Success();
   } else {
     result->NotImplemented();

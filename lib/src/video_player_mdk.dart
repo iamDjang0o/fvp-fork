@@ -1,29 +1,39 @@
-// Copyright 2022 Wang Bin. All rights reserved.
+// Copyright 2022-2024 Wang Bin. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 import 'dart:async';
 import 'dart:io';
+// import 'dart:io';
 import 'package:flutter/widgets.dart'; //
-import 'package:path/path.dart' as path;
+import 'package:flutter/services.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 import 'package:logging/logging.dart';
+import 'fvp_platform_interface.dart';
 import 'extensions.dart';
+import 'media_info.dart';
 
 import '../mdk.dart' as mdk;
 
+ 
 class MdkVideoPlayer extends VideoPlayerPlatform {
   static final _players = <int, mdk.Player>{};
   static final _streamCtl = <int, StreamController<VideoEvent>>{};
   static dynamic _options;
+ 
   static Map<String, Object>? _globalOpts;
   static Map<String, String>? _playerOpts;
   static int? _maxWidth;
   static int? _maxHeight;
   static bool? _fitMaxSize;
-  static List<String>? _platforms;
-  final _log = Logger('fvp');
+  static bool? _tunnel;
+  static String? _subtitleFontFile;
+  static int _lowLatency = 0;
+  static int _seekFlags = mdk.SeekFlag.fromStart | mdk.SeekFlag.inCache;
+  static List<String>? _decoders;
   static final _mdkLog = Logger('mdk');
+  // _prevImpl: required if registerWith() can be invoked multiple times by user
+  static VideoPlayerPlatform? _prevImpl;
 
   static bool isAndroidEmulator() {
     if (!Platform.isAndroid) return false;
@@ -38,40 +48,61 @@ class MdkVideoPlayer extends VideoPlayerPlatform {
   "maxWidth", "maxHeight": texture max size. if not set, video frame size is used. a small value can reduce memory cost, but may result in lower image quality.
  */
   static void registerVideoPlayerPlatformsWith({dynamic options}) {
-    _options = options;
-    _options ??= <String, dynamic>{};
-    // prefer hardware decoders
-    const vd = {
-      'windows': ['MFT:d3d=11', "D3D11", 'CUDA', 'FFmpeg'],
-      'macos': ['VT', 'FFmpeg'],
-      'ios': ['VT', 'FFmpeg'],
-      'linux': ['VAAPI', 'CUDA', 'VDPAU', 'FFmpeg'],
-      'android': ['AMediaCodec', 'FFmpeg'],
-    };
-    if (_options is Map<String, dynamic>) {
-      _platforms = _options["platforms"];
-      if (_platforms is List<String>) {
-        if (!_platforms!.contains(Platform.operatingSystem)) {
+    _log.fine('registerVideoPlayerPlatformsWith: $options');
+    if (options is Map<String, dynamic>) {
+      final platforms = options['platforms'];
+      if (platforms is List<String>) {
+        if (!platforms.contains(Platform.operatingSystem)) {
+          if (_prevImpl != null &&
+              VideoPlayerPlatform.instance is MdkVideoPlayerPlatform) {
+            // null if it's the 1st time to call registerWith() including current platform
+            // if current is not MdkVideoPlayerPlatform, another plugin may set instance
+            // if current is MdkVideoPlayerPlatform, we have to restore instance,  _prevImpl is correct and no one changed instance
+            VideoPlayerPlatform.instance = _prevImpl!;
+          }
           return;
         }
       }
+ 
       if (!isAndroidEmulator()) {
         _options.putIfAbsent(
             'video.decoders', () => vd[Platform.operatingSystem]!);
+ 
       }
-      _maxWidth = _options["maxWidth"];
-      _maxHeight = _options["maxHeight"];
-      _fitMaxSize = _options["fitMaxSize"];
-      _playerOpts = _options['player'];
-      _globalOpts = _options['global'];
+      _lowLatency = (options['lowLatency'] ?? 0) as int;
+      _maxWidth = options["maxWidth"];
+      _maxHeight = options["maxHeight"];
+      _fitMaxSize = options["fitMaxSize"];
+      _tunnel = options["tunnel"];
+      _playerOpts = options['player'];
+      _globalOpts = options['global'];
+      _decoders = options['video.decoders'];
+      _subtitleFontFile = options['subtitleFontFile'];
     }
 
-    _globalOpts?.forEach((key, value) {
-      mdk.setGlobalOption(key, value);
+    if (_decoders == null && !PlatformEx.isAndroidEmulator()) {
+      // prefer hardware decoders
+      const vd = {
+        'windows': ['MFT:d3d=11', "D3D11", "DXVA", 'CUDA', 'FFmpeg'],
+        'macos': ['VT', 'FFmpeg'],
+        'ios': ['VT', 'FFmpeg'],
+        'linux': ['VAAPI', 'CUDA', 'VDPAU', 'FFmpeg'],
+        'android': ['AMediaCodec', 'FFmpeg'],
+      };
+      _decoders = vd[Platform.operatingSystem];
+    }
+
+// delay: ensure log handler is set in main(), blank window if run with debugger.
+// registerWith() can be invoked by dart_plugin_registrant.dart before main. when debugging, won't enter main if posting message from native to dart(new native log message) before main?
+    Future.delayed(const Duration(milliseconds: 0), () {
+      _setupMdk();
     });
 
-    VideoPlayerPlatform.instance = MdkVideoPlayer();
+    _prevImpl ??= VideoPlayerPlatform.instance;
+    VideoPlayerPlatform.instance = MdkVideoPlayerPlatform();
+  }
 
+  static void _setupMdk() {
     mdk.setLogHandler((level, msg) {
       if (msg.endsWith('\n')) {
         msg = msg.substring(0, msg.length - 1);
@@ -91,56 +122,42 @@ class MdkVideoPlayer extends VideoPlayerPlatform {
           return;
       }
     });
-  }
-
-  @Deprecated('Use global function registerWith() instead')
-  static void registerWith({dynamic options}) {
-    registerVideoPlayerPlatformsWith(options: options);
+    // mdk.setGlobalOptions('plugins', 'mdk-braw');
+    mdk.setGlobalOption("log", "all");
+    mdk.setGlobalOption('d3d11.sync.cpu', 1);
+    mdk.setGlobalOption('subtitle.fonts.file',
+        PlatformEx.assetUri(_subtitleFontFile ?? 'assets/subfont.ttf'));
+    _globalOpts?.forEach((key, value) {
+      mdk.setGlobalOption(key, value);
+    });
   }
 
   @override
   Future<void> init() async {}
 
   @override
-  Future<void> dispose(int textureId) async {
-    final p = _players[textureId];
-    if (p == null) {
-      return;
-    }
-
-    _players.remove(textureId);
-    p.dispose();
-    _streamCtl.remove(textureId);
+  Future<void> dispose(int playerId) async {
+    _players.remove(playerId)?.dispose();
   }
 
   @override
   Future<int?> create(DataSource dataSource) async {
-    String? uri;
-    switch (dataSource.sourceType) {
-      case DataSourceType.asset:
-        uri = _assetUri(dataSource.asset!, dataSource.package);
-        break;
-      case DataSourceType.network:
-        uri = dataSource.uri;
-        break;
-      case DataSourceType.file:
-        uri = Uri.decodeComponent(dataSource.uri!);
-        break;
-      case DataSourceType.contentUri:
-        uri = dataSource.uri;
-        break;
-    }
-    final player = mdk.Player();
+    final uri = _toUri(dataSource);
+    final player = MdkVideoPlayer();
     _log.fine('$hashCode player${player.nativeHandle} create($uri)');
+ 
     player.setProperty(
         'avio.protocol_whitelist', 'file,http,https,tcp,tls,crypto');
+ 
     _playerOpts?.forEach((key, value) {
       player.setProperty(key, value);
     });
 
+ 
     if (_options is Map<String, dynamic> &&
         _options.containsKey('video.decoders')) {
       player.videoDecoders = _options['video.decoders'];
+ 
     }
 
     if (dataSource.httpHeaders.isNotEmpty) {
@@ -150,63 +167,67 @@ class MdkVideoPlayer extends VideoPlayerPlatform {
       });
       player.setProperty('avio.headers', headers);
     }
-    final sc = _initEvents(player);
-    player.media = uri!;
-    player.prepare(); // required!
+    player.media = uri;
+    int ret = await player.prepare(); // required!
+    if (ret < 0) {
+      // no throw, handle error in controller.addListener
+      _players[-hashCode] = player;
+      player.streamCtl.addError(PlatformException(
+        code: 'media open error',
+        message: 'invalid or unsupported media',
+      ));
+      //player.dispose(); // dispose for throw
+      return -hashCode;
+    }
 // FIXME: pending events will be processed after texture returned, but no events before prepared
+ 
     final tex = await player.updateTexture(
         width: _maxWidth, height: _maxHeight, fit: _fitMaxSize);
+ 
     if (tex < 0) {
-      sc.close();
-      player.dispose();
-      return null;
+      _players[-hashCode] = player;
+      player.streamCtl.addError(PlatformException(
+        code: 'video size error',
+        message: 'invalid or unsupported media with invalid video size',
+      ));
+      //player.dispose();
+      return -hashCode;
     }
+    _log.fine('$hashCode player${player.nativeHandle} textureId=$tex');
     _players[tex] = player;
-    _streamCtl[tex] = sc;
     return tex;
   }
 
   @override
-  Future<void> setLooping(int textureId, bool looping) async {
-    final player = _players[textureId];
+  Future<void> setLooping(int playerId, bool looping) async {
+    final player = _players[playerId];
     if (player != null) {
       player.loop = looping ? -1 : 0;
     }
   }
 
   @override
-  Future<void> play(int textureId) async {
-    final player = _players[textureId];
-    if (player != null) {
-      player.state = mdk.PlaybackState.playing;
-    }
+  Future<void> play(int playerId) async {
+    _players[playerId]?.state = mdk.PlaybackState.playing;
   }
 
   @override
-  Future<void> pause(int textureId) async {
-    final player = _players[textureId];
-    if (player != null) {
-      player.state = mdk.PlaybackState.paused;
-    }
+  Future<void> pause(int playerId) async {
+    _players[playerId]?.state = mdk.PlaybackState.paused;
   }
 
   @override
-  Future<void> setVolume(int textureId, double volume) async {
-    final player = _players[textureId];
-    if (player != null) {
-      player.volume = volume;
-    }
+  Future<void> setVolume(int playerId, double volume) async {
+    _players[playerId]?.volume = volume;
   }
 
   @override
-  Future<void> setPlaybackSpeed(int textureId, double speed) async {
-    final player = _players[textureId];
-    if (player != null) {
-      player.playbackRate = speed;
-    }
+  Future<void> setPlaybackSpeed(int playerId, double speed) async {
+    _players[playerId]?.playbackRate = speed;
   }
 
   @override
+ 
   Future<void> seekTo(int textureId, Duration position) async {
     final player = _players[textureId];
     if (player != null) {
@@ -216,39 +237,42 @@ class MdkVideoPlayer extends VideoPlayerPlatform {
               mdk.SeekFlag.keyFrame |
               mdk.SeekFlag.inCache));
     }
+ 
   }
 
   @override
-  Future<Duration> getPosition(int textureId) async {
-    final player = _players[textureId];
+  Future<Duration> getPosition(int playerId) async {
+    final player = _players[playerId];
     if (player == null) {
       return Duration.zero;
     }
-    final sc = _streamCtl[textureId];
     final pos = player.position;
     final bufLen = player.buffered();
+ 
     sc?.add(VideoEvent(eventType: VideoEventType.bufferingUpdate, buffered: [
       DurationRange(
           Duration(microseconds: pos), Duration(milliseconds: pos + bufLen))
     ]));
+ 
     return Duration(milliseconds: pos);
   }
 
   @override
-  Stream<VideoEvent> videoEventsFor(int textureId) {
-    var sc = _streamCtl[textureId];
-    if (sc != null) {
-      return sc.stream;
+  Stream<VideoEvent> videoEventsFor(int playerId) {
+    final player = _players[playerId];
+    if (player != null) {
+      return player.streamCtl.stream;
     }
-    throw Exception('No Stream<VideoEvent> for textureId: $textureId.');
+    throw Exception('No Stream<VideoEvent> for textureId: $playerId.');
   }
 
   @override
-  Widget buildView(int textureId) {
-    return Texture(textureId: textureId);
+  Widget buildView(int playerId) {
+    return Texture(textureId: playerId);
   }
 
   @override
+ 
   Future<void> setMixWithOthers(bool mixWithOthers) async {}
 
   StreamController<VideoEvent> _initEvents(mdk.Player player) {
@@ -293,9 +317,13 @@ class MdkVideoPlayer extends VideoPlayerPlatform {
           DurationRange(
               Duration(microseconds: pos), Duration(milliseconds: pos + bufLen))
         ]));
+ 
       }
-    });
+    }
+    player.seek(position: position.inMilliseconds, flags: flags);
+  }
 
+ 
     player.onStateChanged((oldValue, newValue) {
       _log.fine(
           '$hashCode player${player.nativeHandle} onPlaybackStateChanged: $oldValue => $newValue');
@@ -323,7 +351,7 @@ class MdkVideoPlayer extends VideoPlayerPlatform {
             'Frameworks', 'App.framework', 'flutter_assets', key);
       case 'android':
         return 'assets://flutter_assets/$key';
+ 
     }
-    return asset;
   }
 }

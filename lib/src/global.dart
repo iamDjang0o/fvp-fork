@@ -1,4 +1,4 @@
-// Copyright 2022 Wang Bin. All rights reserved.
+// Copyright 2022-2024 Wang Bin. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 import 'dart:ffi';
@@ -17,8 +17,10 @@ const double timeScaleForInt = 1000.0;
 
 /// Stretch video content to fill renderer viewport.
 const double ignoreAspectRatio = 0.0;
+
 /// Keep video frame aspect ratio and scale as large as possible inside video renderer viewport.
 const double keepAspectRatio = 1.1920928955078125e-7;
+
 /// Keep frame aspect ratio and scale as small as possible to cover renderer viewport.
 const double keepAspectRatioCrop = -1.1920928955078125e-7;
 
@@ -37,17 +39,17 @@ enum MediaType {
 
 /// https://github.com/wang-bin/mdk-sdk/wiki/Types#enum-mediastatus-flags
 class MediaStatus {
-  static const noMedia =    MDK_MediaStatus.MDK_MediaStatus_NoMedia;
-  static const unloaded =   MDK_MediaStatus.MDK_MediaStatus_Unloaded;
-  static const loading =    MDK_MediaStatus.MDK_MediaStatus_Loading;
-  static const loaded =     MDK_MediaStatus.MDK_MediaStatus_Loaded;
-  static const prepared =   MDK_MediaStatus.MDK_MediaStatus_Prepared;
-  static const stalled =    MDK_MediaStatus.MDK_MediaStatus_Stalled;
-  static const buffering =  MDK_MediaStatus.MDK_MediaStatus_Buffering;
-  static const buffered =   MDK_MediaStatus.MDK_MediaStatus_Buffered;
-  static const end =        MDK_MediaStatus.MDK_MediaStatus_End;
-  static const seeking =    MDK_MediaStatus.MDK_MediaStatus_Seeking;
-  static const invalid =    MDK_MediaStatus.MDK_MediaStatus_Invalid;
+  static const noMedia = MDK_MediaStatus.MDK_MediaStatus_NoMedia;
+  static const unloaded = MDK_MediaStatus.MDK_MediaStatus_Unloaded;
+  static const loading = MDK_MediaStatus.MDK_MediaStatus_Loading;
+  static const loaded = MDK_MediaStatus.MDK_MediaStatus_Loaded;
+  static const prepared = MDK_MediaStatus.MDK_MediaStatus_Prepared;
+  static const stalled = MDK_MediaStatus.MDK_MediaStatus_Stalled;
+  static const buffering = MDK_MediaStatus.MDK_MediaStatus_Buffering;
+  static const buffered = MDK_MediaStatus.MDK_MediaStatus_Buffered;
+  static const end = MDK_MediaStatus.MDK_MediaStatus_End;
+  static const seeking = MDK_MediaStatus.MDK_MediaStatus_Seeking;
+  static const invalid = MDK_MediaStatus.MDK_MediaStatus_Invalid;
 
   final int rawValue;
   const MediaStatus(this.rawValue);
@@ -68,6 +70,7 @@ class MediaStatus {
     if (test(buffering)) s += '+buffering';
     if (test(buffered)) s += '+buffered';
     if (test(end)) s += '+end';
+    if (test(seeking)) s += '+seeking';
     if (test(invalid)) s += '+invalid';
     return '$s)';
   }
@@ -87,25 +90,26 @@ enum PlaybackState {
 
   factory PlaybackState.from(int i) {
     const states = [
-            PlaybackState.stopped,
-            PlaybackState.playing,
-            PlaybackState.paused,
-          ];
+      PlaybackState.stopped,
+      PlaybackState.playing,
+      PlaybackState.paused,
+    ];
     return states[i];
   }
 }
 
 /// https://github.com/wang-bin/mdk-sdk/wiki/Types#enum-seekflag-flags
 class SeekFlag {
-  static const from0      = MDKSeekFlag.MDK_SeekFlag_From0;
-  static const fromStart  = MDKSeekFlag.MDK_SeekFlag_FromStart;
-  static const fromNow    = MDKSeekFlag.MDK_SeekFlag_FromNow;
-  static const frame      = MDKSeekFlag.MDK_SeekFlag_Frame;
-  static const keyFrame   = MDKSeekFlag.MDK_SeekFlag_KeyFrame;
-  static const fast       = MDKSeekFlag.MDK_SeekFlag_Fast;
-  static const inCache    = MDKSeekFlag.MDK_SeekFlag_InCache;
+  static const from0 = MDKSeekFlag.MDK_SeekFlag_From0;
+  static const fromStart = MDKSeekFlag.MDK_SeekFlag_FromStart;
+  static const fromNow = MDKSeekFlag.MDK_SeekFlag_FromNow;
+  static const frame = MDKSeekFlag.MDK_SeekFlag_Frame;
+  static const keyFrame = MDKSeekFlag.MDK_SeekFlag_KeyFrame;
+  static const fast = MDKSeekFlag.MDK_SeekFlag_Fast;
+  static const inCache = MDKSeekFlag.MDK_SeekFlag_InCache;
+
   /// defaultFlags is keyFrame|fromStart|inCache
-  static const defaultFlags  = MDKSeekFlag.MDK_SeekFlag_Default;
+  static const defaultFlags = MDKSeekFlag.MDK_SeekFlag_Default;
 
   final int rawValue;
   const SeekFlag(this.rawValue);
@@ -164,19 +168,27 @@ enum LogLevel {
 
   factory LogLevel.from(int rawValue) {
     switch (rawValue) {
-    case MDK_LogLevel.MDK_LogLevel_Off: return off;
-    case MDK_LogLevel.MDK_LogLevel_Error: return error;
-    case MDK_LogLevel.MDK_LogLevel_Warning: return warning;
-    case MDK_LogLevel.MDK_LogLevel_Info: return info;
-    case MDK_LogLevel.MDK_LogLevel_All: return all;
-    default: return info;
+      case MDK_LogLevel.MDK_LogLevel_Off:
+        return off;
+      case MDK_LogLevel.MDK_LogLevel_Error:
+        return error;
+      case MDK_LogLevel.MDK_LogLevel_Warning:
+        return warning;
+      case MDK_LogLevel.MDK_LogLevel_Info:
+        return info;
+      case MDK_LogLevel.MDK_LogLevel_Debug:
+        return debug;
+      case MDK_LogLevel.MDK_LogLevel_All:
+        return all;
+      default:
+        return info;
     }
   }
 }
 
 /// https://github.com/wang-bin/mdk-sdk/wiki/Types#class-mediaevent
 class MediaEvent {
-  final int error;      // progress value [0, 100] if category is "reader.buffering"
+  final int error; // progress value [0, 100] if category is "reader.buffering"
   final String category;
   final String detail;
 
@@ -189,7 +201,8 @@ int version() => Libmdk.instance.MDK_version();
 /// Global options: https://github.com/wang-bin/mdk-sdk/wiki/Global-Options
 void setGlobalOption<T>(String name, T value) {
   final k = name.toNativeUtf8();
-  if (value is String) { // T == String
+  if (value is String) {
+    // T == String
     final v = value.toNativeUtf8();
     Libmdk.instance.MDK_setGlobalOptionString(k.cast(), v.cast());
     malloc.free(v);
@@ -197,6 +210,8 @@ void setGlobalOption<T>(String name, T value) {
     Libmdk.instance.MDK_setGlobalOptionInt32(k.cast(), value);
   } else if (value is bool) {
     Libmdk.instance.MDK_setGlobalOptionInt32(k.cast(), value ? 1 : 0);
+  } else if (value is LogLevel) {
+    Libmdk.instance.MDK_setGlobalOptionInt32(k.cast(), value.rawValue);
   }
   malloc.free(k);
 }
@@ -230,20 +245,24 @@ class _GlobalCallbacks {
   static _GlobalCallbacks instance = _GlobalCallbacks();
 
   _GlobalCallbacks() {
-    Libfvp.registerType(0, 5, false); // before registerPort() to ensure no log will be dropped
+    // registerType() before registerPort() to ensure no log will be dropped
+    Libfvp.registerType(0, 5, false);
     _receivePort.listen((message) {
       final type = message[0] as int;
       switch (type) {
-        case 5: { // log
-          final level = message[1] as int;
-          final msg = message[2] as String;
-          if (_logCb != null) {
-            _logCb!(LogLevel.from(level), msg);
+        case 5:
+          {
+            // log
+            final level = message[1] as int;
+            final msg = message[2] as String;
+            if (_logCb != null) {
+              _logCb!(LogLevel.from(level), msg);
+            }
           }
-        }
       }
     });
-    Libfvp.registerPort(0, NativeApi.postCObject.cast(), _receivePort.sendPort.nativePort);
+    Libfvp.registerPort(
+        0, NativeApi.postCObject.cast(), _receivePort.sendPort.nativePort);
   }
 
   void setLogHandler(void Function(LogLevel, String)? cb) {

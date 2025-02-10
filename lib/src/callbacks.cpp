@@ -1,4 +1,4 @@
-// Copyright 2022 Wang Bin. All rights reserved.
+// Copyright 2022-2024 Wang Bin. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -31,7 +31,6 @@ public:
     condition_variable cv[int(CallbackType::Count)];
 
     mdk::State oldState = mdk::State::Stopped;
-    mdk::MediaStatus oldStatus = mdk::MediaStatus::NoMedia;
 };
 
 static unordered_map<int64_t, shared_ptr<Player>> players;
@@ -76,7 +75,7 @@ FVP_EXPORT void MdkCallbacksRegisterPort(int64_t handle, void* post_c_object, in
                 },
             };
             if (!postCObject(send_port, &msg)) {
-                cout << "postCObject error" << endl; // clog: dead log. why post error?
+                cout << __func__ << "postCObject error" << endl; // clog: dead log. why post error?
                 return;
             }
         });
@@ -130,7 +129,7 @@ FVP_EXPORT void MdkCallbacksRegisterPort(int64_t handle, void* post_c_object, in
             },
         };
         if (!postCObject(send_port, &msg)) {
-            clog << "postCObject error" << endl;
+            clog << __func__ << __LINE__ << " postCObject error" << endl;
             return false;
         }
         return false;
@@ -179,7 +178,7 @@ FVP_EXPORT void MdkCallbacksRegisterPort(int64_t handle, void* post_c_object, in
             }
         };
         if (!postCObject(send_port, &msg)) {
-            clog << "postCObject error" << endl;
+            clog << __func__ << __LINE__ << " postCObject error" << endl;
             return;
         }
         if (!p->reply[type])
@@ -193,14 +192,12 @@ FVP_EXPORT void MdkCallbacksRegisterPort(int64_t handle, void* post_c_object, in
         });
     });
 
-    player->onMediaStatusChanged([=](mdk::MediaStatus s){
+    player->onMediaStatus([=](mdk::MediaStatus oldValue, mdk::MediaStatus newValue){
         auto sp = wp.lock();
         if (!sp)
             return false;
         auto p = sp.get();
         const auto type = int(CallbackType::MediaStatus);
-        const auto oldValue = p->oldStatus;
-        p->oldStatus = s;
         if (!(p->callbackTypes & (1 << type)))
             return true;
 
@@ -222,7 +219,7 @@ FVP_EXPORT void MdkCallbacksRegisterPort(int64_t handle, void* post_c_object, in
         Dart_CObject v1{
             .type = Dart_CObject_kInt64,
             .value = {
-                .as_int64 = (int64_t)s,
+                .as_int64 = (int64_t)newValue,
             }
         };
         Dart_CObject* arr[] = { &t, &v0, &v1 };
@@ -236,7 +233,7 @@ FVP_EXPORT void MdkCallbacksRegisterPort(int64_t handle, void* post_c_object, in
             }
         };
         if (!postCObject(send_port, &msg)) {
-            clog << "postCObject error" << endl;
+            clog << __func__ << __LINE__ << "postCObject error" << endl;
             return true;
         }
         if (!p->reply[type])
@@ -271,9 +268,6 @@ FVP_EXPORT void MdkCallbacksUnregisterPort(int64_t handle)
         sp->cv[i].notify_one();
     }
 
-    sp->onEvent(nullptr);
-    sp->onStateChanged(nullptr);
-    sp->onMediaStatusChanged(nullptr);
     players.erase(it);
 }
 
@@ -334,11 +328,80 @@ FVP_EXPORT bool MdkPrepare(int64_t handle, int64_t pos, int64_t seekFlags, void*
     }
     const auto postCObject = reinterpret_cast<bool(*)(Dart_Port, Dart_CObject*)>(post_c_object);
     auto sp = it->second;
-    sp->prepare(pos, [=](int64_t position, bool* boost){
+    auto wp = weak_ptr<Player>(sp);
+    const auto tid = this_thread::get_id();
+    sp->set(mdk::State::Stopped);
+    sp->waitFor(mdk::State::Stopped); // ensure correct state
+    sp->prepare(pos, [send_port, postCObject, wp, tid](int64_t position, bool* boost){
+        auto sp = wp.lock();
+        if (!sp)
+            return false;
+        auto p = sp.get();
+        const auto info = p->mediaInfo();
+        const auto type = int(CallbackType::Prepared);
+        unique_lock lock(p->mtx[type]);
+        p->dataReady[type] = false;
         Dart_CObject t{
             .type = Dart_CObject_kInt64,
             .value = {
-                .as_int64 = CallbackType::Prepared,
+                .as_int64 = type,
+            }
+        };
+        Dart_CObject v{
+            .type = Dart_CObject_kInt64,
+            .value = {
+                .as_int64 = position,
+            }
+        };
+// live video duration is 0 when prepared, and then increases to max read time
+        Dart_CObject live{
+            .type = Dart_CObject_kBool,
+            .value = {
+                .as_bool = info.duration <= 0,
+            }
+        };
+        Dart_CObject* arr[] = { &t, &v, &live };
+        Dart_CObject msg {
+            .type = Dart_CObject_kArray,
+            .value = {
+                .as_array = {
+                    .length = std::size(arr),
+                    .values = arr,
+                },
+            },
+        };
+        if (!postCObject(send_port, &msg)) {
+            clog << __func__ << __LINE__ << " postCObject error" << endl; // when?
+            return false;
+        }
+        if (!p->reply[type])
+            return true;
+        if (tid == this_thread::get_id()) {// FIXME: can not convert dart non-static function to native function, and dart object has no address, so func(context, args) is impossible too
+            clog << __func__ << "callback in main thread. won't wait callback" << endl;
+            return true;
+        }
+        p->cv[type].wait(lock, [=]{
+            return p->dataReady[type] || !(p->callbackTypes & (1 << type));
+        });
+        *boost = p->data[type].prepared.boost;
+        return p->data[type].prepared.ret;
+    }, mdk::SeekFlag(seekFlags));
+    return true;
+}
+
+FVP_EXPORT bool MdkSeek(int64_t handle, int64_t pos, int64_t seekFlags, void* post_c_object, int64_t send_port)
+{
+    const auto it = players.find(handle);
+    if (it == players.cend()) {
+        return false;
+    }
+    const auto postCObject = reinterpret_cast<bool(*)(Dart_Port, Dart_CObject*)>(post_c_object);
+    auto sp = it->second;
+    return sp->seek(pos, mdk::SeekFlag(seekFlags), [=](int64_t position){
+        Dart_CObject t{
+            .type = Dart_CObject_kInt64,
+            .value = {
+                .as_int64 = CallbackType::Seek,
             }
         };
         Dart_CObject v{
@@ -358,10 +421,63 @@ FVP_EXPORT bool MdkPrepare(int64_t handle, int64_t pos, int64_t seekFlags, void*
             },
         };
         if (!postCObject(send_port, &msg)) {
-            cout << "postCObject error" << endl; // when?
+            clog << __func__ << __LINE__ << " postCObject error" << endl; // when?
             return false;
         }
         return true;
-    }, mdk::SeekFlag(seekFlags));
+    });
+}
+
+extern "C" void* MdkGetPlayerVid(int64_t texId);
+
+FVP_EXPORT bool MdkSnapshot(int64_t handle, int64_t texId, int w, int h, void* post_c_object, int64_t send_port)
+{
+    const auto it = players.find(handle);
+    if (it == players.cend()) {
+        return false;
+    }
+    const auto postCObject = reinterpret_cast<bool(*)(Dart_Port, Dart_CObject*)>(post_c_object);
+    auto sp = it->second;
+    Player::SnapshotRequest req{
+        .width = w,
+        .height = h,
+    };
+    sp->snapshot(&req, [=](const Player::SnapshotRequest* ret, double frameTime)->string {
+        Dart_CObject t{
+            .type = Dart_CObject_kInt64,
+            .value = {
+                .as_int64 = CallbackType::Snapshot,
+            }
+        };
+        Dart_CObject v{
+            .type = Dart_CObject_kTypedData, // copy to dart. External: no copy
+            .value = {
+                .as_typed_data = {
+                    .type = Dart_TypedData_kUint8,
+                    .length = ret->stride * ret->height,
+                    .values = ret->data,
+                },
+            }
+        };
+        Dart_CObject* arr[] = { &t, &v };
+        Dart_CObject msg {
+            .type = Dart_CObject_kArray,
+            .value = {
+                .as_array = {
+                    .length = std::size(arr),
+                    .values = arr,
+                },
+            },
+        };
+        if (!postCObject(send_port, &msg)) {
+            clog << __func__ << __LINE__ << " postCObject error" << endl; // when?
+            return {};
+        }
+        return {};
+    }
+#ifdef __ANDROID__
+        , MdkGetPlayerVid(texId)
+#endif
+    );
     return true;
 }

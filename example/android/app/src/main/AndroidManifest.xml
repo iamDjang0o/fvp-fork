@@ -11,6 +11,7 @@
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
+            android:requestLegacyExternalStorage="true"
             android:windowSoftInputMode="adjustResize">
             <!-- Specifies an Android theme to apply to this Activity as soon as
                  the Android process has started. This theme is visible to the user
@@ -35,9 +36,26 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="true" />
     </application>
+    <!--
+      Internet access permissions.
+      -->
     <uses-permission android:name="android.permission.INTERNET"
         tools:ignore="ManifestOrder" />
+      <!--
+        Media access permissions.
+        Android 13 or higher.
+        https://developer.android.com/about/versions/13/behavior-changes-13#granular-media-permissions
+        -->
+      <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+      <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+      <!--
+        Storage access permissions.
+        Android 12 or lower.
+        -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />

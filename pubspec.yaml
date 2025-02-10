@@ -1,27 +1,34 @@
 name: fvp
-description: A plugin for video_player and APIs for your own players. Support all desktop/mobile platforms. Hardware decoders, optimal renders. Supports most formats via FFmpeg
-version: 0.3.0
+description: video_player plugin and backend APIs. Support all desktop/mobile platforms with hardware decoders, optimal renders. Supports most formats via FFmpeg
+version: 0.29.0
 homepage: https://github.com/wang-bin/fvp
+topics:
+  - video
+  - player
+  - video-player
+  - audio-player
+  - videoplayer
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
-  flutter: ">=2.5.0"
+  flutter: ">=3.27.1"
 
 dependencies:
-  ffi: ^2.0.2
+  ffi: ^2.1.0
   flutter:
     sdk: flutter
   logging: ^1.2.0
-  path: ^1.8.3
-  plugin_platform_interface: ^2.0.2
+  path: ^1.8.0
+  plugin_platform_interface: ^2.0.0
+  video_player: ^2.6.0
   video_player_platform_interface: ^6.2.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^2.0.0
-  ffigen: ^9.0.1
-  lints: ^2.1.1
+  flutter_lints: any
+  ffigen: '>=9.0.0'
+  lints: any
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -39,7 +46,7 @@ flutter:
   # All these are used by the tooling to maintain consistency when
   # adding or updating assets for this project.
   plugin:
-#    implements: video_player
+    #implements: video_player # flutter 3.27+ can only select 1 implementation
     platforms:
       android:
         package: com.mediadevkit.fvp
@@ -48,11 +55,13 @@ flutter:
         pluginClass: FvpPlugin
         sharedDarwinSource: true
       linux:
+        dartPluginClass: VideoPlayerRegistrant # auto registered in .dart_tool/flutter_build/dart_plugin_registrant.dart
         pluginClass: FvpPlugin
       macos:
         pluginClass: FvpPlugin
         sharedDarwinSource: true
       windows:
+        dartPluginClass: VideoPlayerRegistrant
         pluginClass: FvpPluginCApi
 
   # To add assets to your plugin package, add an assets section, like this:
