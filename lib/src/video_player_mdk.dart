@@ -13,7 +13,6 @@ import 'extensions.dart';
 import '../mdk.dart' as mdk;
 
 class MdkVideoPlayer extends VideoPlayerPlatform {
-
   static final _players = <int, mdk.Player>{};
   static final _streamCtl = <int, StreamController<VideoEvent>>{};
   static dynamic _options;
@@ -25,6 +24,11 @@ class MdkVideoPlayer extends VideoPlayerPlatform {
   static List<String>? _platforms;
   final _log = Logger('fvp');
   static final _mdkLog = Logger('mdk');
+
+  static bool isAndroidEmulator() {
+    if (!Platform.isAndroid) return false;
+    return Platform.environment.containsKey('ANDROID_EMULATOR');
+  }
 
 /*
   Registers this class as the default instance of [VideoPlayerPlatform].
@@ -51,8 +55,9 @@ class MdkVideoPlayer extends VideoPlayerPlatform {
           return;
         }
       }
-      if (!Platform().isAndroidEmulator()) {
-        _options.putIfAbsent('video.decoders', () => vd[Platform.operatingSystem]!);
+      if (!isAndroidEmulator()) {
+        _options.putIfAbsent(
+            'video.decoders', () => vd[Platform.operatingSystem]!);
       }
       _maxWidth = _options["maxWidth"];
       _maxHeight = _options["maxHeight"];
@@ -72,12 +77,18 @@ class MdkVideoPlayer extends VideoPlayerPlatform {
         msg = msg.substring(0, msg.length - 1);
       }
       switch (level) {
-      case mdk.LogLevel.error: _mdkLog.severe(msg);
-      case mdk.LogLevel.warning: _mdkLog.warning(msg);
-      case mdk.LogLevel.info: _mdkLog.info(msg);
-      case mdk.LogLevel.debug: _mdkLog.fine(msg);
-      case mdk.LogLevel.all: _mdkLog.finest(msg);
-      default: return;
+        case mdk.LogLevel.error:
+          _mdkLog.severe(msg);
+        case mdk.LogLevel.warning:
+          _mdkLog.warning(msg);
+        case mdk.LogLevel.info:
+          _mdkLog.info(msg);
+        case mdk.LogLevel.debug:
+          _mdkLog.fine(msg);
+        case mdk.LogLevel.all:
+          _mdkLog.finest(msg);
+        default:
+          return;
       }
     });
   }
@@ -88,8 +99,7 @@ class MdkVideoPlayer extends VideoPlayerPlatform {
   }
 
   @override
-  Future<void> init() async{
-  }
+  Future<void> init() async {}
 
   @override
   Future<void> dispose(int textureId) async {
@@ -122,12 +132,14 @@ class MdkVideoPlayer extends VideoPlayerPlatform {
     }
     final player = mdk.Player();
     _log.fine('$hashCode player${player.nativeHandle} create($uri)');
-    player.setProperty('avio.protocol_whitelist', 'file,http,https,tcp,tls,crypto');
+    player.setProperty(
+        'avio.protocol_whitelist', 'file,http,https,tcp,tls,crypto');
     _playerOpts?.forEach((key, value) {
       player.setProperty(key, value);
     });
 
-    if (_options is Map<String, dynamic> && _options.containsKey('video.decoders')) {
+    if (_options is Map<String, dynamic> &&
+        _options.containsKey('video.decoders')) {
       player.videoDecoders = _options['video.decoders'];
     }
 
@@ -142,7 +154,8 @@ class MdkVideoPlayer extends VideoPlayerPlatform {
     player.media = uri!;
     player.prepare(); // required!
 // FIXME: pending events will be processed after texture returned, but no events before prepared
-    final tex = await player.updateTexture(width: _maxWidth, height: _maxHeight, fit: _fitMaxSize);
+    final tex = await player.updateTexture(
+        width: _maxWidth, height: _maxHeight, fit: _fitMaxSize);
     if (tex < 0) {
       sc.close();
       player.dispose();
@@ -197,7 +210,11 @@ class MdkVideoPlayer extends VideoPlayerPlatform {
   Future<void> seekTo(int textureId, Duration position) async {
     final player = _players[textureId];
     if (player != null) {
-      player.seek(position: position.inMilliseconds, flags: const mdk.SeekFlag(mdk.SeekFlag.fromStart|mdk.SeekFlag.keyFrame|mdk.SeekFlag.inCache));
+      player.seek(
+          position: position.inMilliseconds,
+          flags: const mdk.SeekFlag(mdk.SeekFlag.fromStart |
+              mdk.SeekFlag.keyFrame |
+              mdk.SeekFlag.inCache));
     }
   }
 
@@ -210,10 +227,11 @@ class MdkVideoPlayer extends VideoPlayerPlatform {
     final sc = _streamCtl[textureId];
     final pos = player.position;
     final bufLen = player.buffered();
-    sc?.add(VideoEvent(eventType: VideoEventType.bufferingUpdate
-      , buffered: [DurationRange(Duration(microseconds: pos), Duration(milliseconds: pos + bufLen))]));
+    sc?.add(VideoEvent(eventType: VideoEventType.bufferingUpdate, buffered: [
+      DurationRange(
+          Duration(microseconds: pos), Duration(milliseconds: pos + bufLen))
+    ]));
     return Duration(milliseconds: pos);
-
   }
 
   @override
@@ -231,45 +249,59 @@ class MdkVideoPlayer extends VideoPlayerPlatform {
   }
 
   @override
-  Future<void> setMixWithOthers(bool mixWithOthers) async {
-  }
+  Future<void> setMixWithOthers(bool mixWithOthers) async {}
 
   StreamController<VideoEvent> _initEvents(mdk.Player player) {
     final sc = StreamController<VideoEvent>();
     player.onMediaStatusChanged((oldValue, newValue) {
-      _log.fine('$hashCode player${player.nativeHandle} onMediaStatusChanged: $oldValue => $newValue');
-      if (!oldValue.test(mdk.MediaStatus.loaded) && newValue.test(mdk.MediaStatus.loaded)) {
+      _log.fine(
+          '$hashCode player${player.nativeHandle} onMediaStatusChanged: $oldValue => $newValue');
+      if (!oldValue.test(mdk.MediaStatus.loaded) &&
+          newValue.test(mdk.MediaStatus.loaded)) {
         final info = player.mediaInfo;
         var size = const Size(0, 0);
         if (info.video != null) {
           final vc = info.video![0].codec;
           size = Size(vc.width.toDouble(), vc.height.toDouble());
         }
-        sc.add(VideoEvent(eventType: VideoEventType.initialized
-          , duration: Duration(milliseconds: info.duration == 0 ? double.maxFinite.toInt() : info.duration) // FIXME: live stream info.duraiton == 0 and result a seekTo(0) in play()
-          , size: size));
-      } else if (!oldValue.test(mdk.MediaStatus.buffering) && newValue.test(mdk.MediaStatus.buffering)) {
+        sc.add(VideoEvent(
+            eventType: VideoEventType.initialized,
+            duration: Duration(
+                milliseconds: info.duration == 0
+                    ? double.maxFinite.toInt()
+                    : info
+                        .duration) // FIXME: live stream info.duraiton == 0 and result a seekTo(0) in play()
+            ,
+            size: size));
+      } else if (!oldValue.test(mdk.MediaStatus.buffering) &&
+          newValue.test(mdk.MediaStatus.buffering)) {
         sc.add(VideoEvent(eventType: VideoEventType.bufferingStart));
-      } else if (!oldValue.test(mdk.MediaStatus.buffered) && newValue.test(mdk.MediaStatus.buffered)) {
+      } else if (!oldValue.test(mdk.MediaStatus.buffered) &&
+          newValue.test(mdk.MediaStatus.buffered)) {
         sc.add(VideoEvent(eventType: VideoEventType.bufferingEnd));
       }
       return true;
     });
 
     player.onEvent((ev) {
-      _log.fine('$hashCode player${player.nativeHandle} onEvent: ${ev.category} ${ev.error}');
+      _log.fine(
+          '$hashCode player${player.nativeHandle} onEvent: ${ev.category} ${ev.error}');
       if (ev.category == "reader.buffering") {
         final pos = player.position;
         final bufLen = player.buffered();
-        sc.add(VideoEvent(eventType: VideoEventType.bufferingUpdate
-          , buffered: [DurationRange(Duration(microseconds: pos), Duration(milliseconds: pos + bufLen))]));
+        sc.add(VideoEvent(eventType: VideoEventType.bufferingUpdate, buffered: [
+          DurationRange(
+              Duration(microseconds: pos), Duration(milliseconds: pos + bufLen))
+        ]));
       }
     });
 
     player.onStateChanged((oldValue, newValue) {
-      _log.fine('$hashCode player${player.nativeHandle} onPlaybackStateChanged: $oldValue => $newValue');
-      sc.add(VideoEvent(eventType: VideoEventType.isPlayingStateUpdate
-        , isPlaying: newValue == mdk.PlaybackState.playing));
+      _log.fine(
+          '$hashCode player${player.nativeHandle} onPlaybackStateChanged: $oldValue => $newValue');
+      sc.add(VideoEvent(
+          eventType: VideoEventType.isPlayingStateUpdate,
+          isPlaying: newValue == mdk.PlaybackState.playing));
     });
     return sc;
   }
@@ -277,15 +309,19 @@ class MdkVideoPlayer extends VideoPlayerPlatform {
   static String _assetUri(String asset, String? package) {
     final key = asset;
     switch (Platform.operatingSystem) {
-    case 'windows':
-        return path.join(path.dirname(Platform.resolvedExecutable), 'data', 'flutter_assets', key);
-    case 'linux':
-        return path.join(path.dirname(Platform.resolvedExecutable), 'data', 'flutter_assets', key);
-    case 'macos':
-        return path.join(path.dirname(Platform.resolvedExecutable), '..', 'Frameworks', 'App.framework', 'Resources', 'flutter_assets', key);
-    case 'ios':
-        return path.join(path.dirname(Platform.resolvedExecutable), 'Frameworks', 'App.framework', 'flutter_assets', key);
-    case 'android':
+      case 'windows':
+        return path.join(path.dirname(Platform.resolvedExecutable), 'data',
+            'flutter_assets', key);
+      case 'linux':
+        return path.join(path.dirname(Platform.resolvedExecutable), 'data',
+            'flutter_assets', key);
+      case 'macos':
+        return path.join(path.dirname(Platform.resolvedExecutable), '..',
+            'Frameworks', 'App.framework', 'Resources', 'flutter_assets', key);
+      case 'ios':
+        return path.join(path.dirname(Platform.resolvedExecutable),
+            'Frameworks', 'App.framework', 'flutter_assets', key);
+      case 'android':
         return 'assets://flutter_assets/$key';
     }
     return asset;
