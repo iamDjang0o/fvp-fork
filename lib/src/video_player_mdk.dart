@@ -4,6 +4,7 @@
 
 import 'dart:async';
 import 'dart:io';
+// import 'dart:io';
 import 'package:flutter/widgets.dart'; //
 import 'package:flutter/services.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
@@ -207,8 +208,8 @@ class MdkVideoPlayerPlatform extends VideoPlayerPlatform {
   Future<void> init() async {}
 
   @override
-  Future<void> dispose(int textureId) async {
-    _players.remove(textureId)?.dispose();
+  Future<void> dispose(int playerId) async {
+    _players.remove(playerId)?.dispose();
   }
 
   @override
@@ -285,41 +286,41 @@ class MdkVideoPlayerPlatform extends VideoPlayerPlatform {
   }
 
   @override
-  Future<void> setLooping(int textureId, bool looping) async {
-    final player = _players[textureId];
+  Future<void> setLooping(int playerId, bool looping) async {
+    final player = _players[playerId];
     if (player != null) {
       player.loop = looping ? -1 : 0;
     }
   }
 
   @override
-  Future<void> play(int textureId) async {
-    _players[textureId]?.state = mdk.PlaybackState.playing;
+  Future<void> play(int playerId) async {
+    _players[playerId]?.state = mdk.PlaybackState.playing;
   }
 
   @override
-  Future<void> pause(int textureId) async {
-    _players[textureId]?.state = mdk.PlaybackState.paused;
+  Future<void> pause(int playerId) async {
+    _players[playerId]?.state = mdk.PlaybackState.paused;
   }
 
   @override
-  Future<void> setVolume(int textureId, double volume) async {
-    _players[textureId]?.volume = volume;
+  Future<void> setVolume(int playerId, double volume) async {
+    _players[playerId]?.volume = volume;
   }
 
   @override
-  Future<void> setPlaybackSpeed(int textureId, double speed) async {
-    _players[textureId]?.playbackRate = speed;
+  Future<void> setPlaybackSpeed(int playerId, double speed) async {
+    _players[playerId]?.playbackRate = speed;
   }
 
   @override
-  Future<void> seekTo(int textureId, Duration position) async {
-    return _seekToWithFlags(textureId, position, mdk.SeekFlag(_seekFlags));
+  Future<void> seekTo(int playerId, Duration position) async {
+    return _seekToWithFlags(playerId, position, mdk.SeekFlag(_seekFlags));
   }
 
   @override
-  Future<Duration> getPosition(int textureId) async {
-    final player = _players[textureId];
+  Future<Duration> getPosition(int playerId) async {
+    final player = _players[playerId];
     if (player == null) {
       return Duration.zero;
     }
@@ -337,17 +338,17 @@ class MdkVideoPlayerPlatform extends VideoPlayerPlatform {
   }
 
   @override
-  Stream<VideoEvent> videoEventsFor(int textureId) {
-    final player = _players[textureId];
+  Stream<VideoEvent> videoEventsFor(int playerId) {
+    final player = _players[playerId];
     if (player != null) {
       return player.streamCtl.stream;
     }
-    throw Exception('No Stream<VideoEvent> for textureId: $textureId.');
+    throw Exception('No Stream<VideoEvent> for textureId: $playerId.');
   }
 
   @override
-  Widget buildView(int textureId) {
-    return Texture(textureId: textureId);
+  Widget buildView(int playerId) {
+    return Texture(textureId: playerId);
   }
 
   @override

@@ -123,7 +123,7 @@ class _ExampleCard extends StatelessWidget {
             leading: const Icon(Icons.airline_seat_flat_angled),
             title: Text(title),
           ),
-          ButtonBar(
+          OverflowBar(
             children: <Widget>[
               TextButton(
                 child: const Text('BUY TICKETS'),
@@ -156,8 +156,8 @@ class _ButterFlyAssetVideoState extends State<_ButterFlyAssetVideo> {
   @override
   void initState() {
     super.initState();
-    _controller = VideoPlayerController.network(
-        'https://cdn.theoplayer.com/video/big_buck_bunny/stream-3-3000000/index.m3u8');
+    _controller = VideoPlayerController.networkUrl(Uri.parse(
+        'https://cdn.theoplayer.com/video/big_buck_bunny/stream-3-3000000/index.m3u8'));
 
     _controller.addListener(() {
       setState(() {});
@@ -220,11 +220,8 @@ class _BumbleBeeRemoteVideoState extends State<_BumbleBeeRemoteVideo> {
   @override
   void initState() {
     super.initState();
-    _controller = VideoPlayerController.network(
-      'https://flutter.github.io/assets-for-api-docs/assets/videos/bee.mp4',
-      closedCaptionFile: _loadCaptions(),
-      videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-    );
+    _controller = VideoPlayerController.networkUrl(Uri.parse(
+        'https://flutter.github.io/assets-for-api-docs/assets/videos/bee.mp4'));
 
     _controller.addListener(() {
       setState(() {});
@@ -404,8 +401,8 @@ class _PlayerVideoAndPopPageState extends State<_PlayerVideoAndPopPage> {
   void initState() {
     super.initState();
 
-    _videoPlayerController = VideoPlayerController.network(
-        'https://ks3-cn-beijing.ksyun.com/ksplayer/h265/mp4_resource/jinjie_265.mp4');
+    _videoPlayerController = VideoPlayerController.networkUrl(Uri.parse(
+        'https://ks3-cn-beijing.ksyun.com/ksplayer/h265/mp4_resource/jinjie_265.mp4'));
     _videoPlayerController.addListener(_onVideoControllerValueUpdated);
   }
 
